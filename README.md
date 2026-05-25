@@ -1,4 +1,4 @@
-# ThriftTH - Engineering Case Study
+# ThriftTH — Engineering Case Study
 
 A production two-sided secondhand fashion marketplace for the Thai market, built solo over ~4 months and running at **[thriftth.app](https://thriftth.app)**. This document is a technical retrospective, not a pitch. It describes what was built, why specific architectural choices were made, what broke in production, and which constraints shaped the design.
 
@@ -66,7 +66,7 @@ flowchart LR
     Edge --> DB
 ```
 
-**Ingress posture.** Authenticated user actions go directly to Postgres via Supabase's REST/Realtime layer, gated by RLS. Anything requiring server-held secrets (AI keys, Omise secret key, Mux signing secret, Shippop credentials, ticket HMAC key) is funneled through edge functions. Third-party webhook endpoints (`omise-webhook`, `mux-webhook`) deploy with `verify_jwt = false` and verify their own provider signatures in-function - this is configured explicitly in `supabase/config.toml`.
+**Ingress posture.** Authenticated user actions go directly to Postgres via Supabase's REST/Realtime layer, gated by RLS. Anything requiring server-held secrets (AI keys, Omise secret key, Mux signing secret, Shippop credentials, ticket HMAC key) is funneled through edge functions. Third-party webhook endpoints (`omise-webhook`, `mux-webhook`) deploy with `verify_jwt = false` and verify their own provider signatures in-function — this is configured explicitly in `supabase/config.toml`.
 
 **No backend service of our own.** There is no Node server, no Render container, no Kubernetes. The entire backend surface is Postgres + ~34 Deno edge functions. This was a deliberate operational simplification: one runtime, one auth model, one deployment surface, one observability stream.
 
@@ -90,7 +90,7 @@ flowchart LR
 | Platform | `platform_settings`, `analytics_events`, `admin_logs` |
 
 **Security posture.**
-- RLS is on for every user-facing table. Roles live in a separate `user_roles` table with a `has_role(user_id, role)` `SECURITY DEFINER` helper - never on `profiles` - to prevent the recursive-RLS and privilege-escalation traps that come from storing roles next to user data.
+- RLS is on for every user-facing table. Roles live in a separate `user_roles` table with a `has_role(user_id, role)` `SECURITY DEFINER` helper — never on `profiles` — to prevent the recursive-RLS and privilege-escalation traps that come from storing roles next to user data.
 - All seven public views use `WITH (security_invoker = on)` so they inherit the caller's RLS context instead of running as the view owner. This is enforced as a project convention because Supabase views default to `security_definer`, which silently bypasses RLS.
 - Cross-table atomic operations (point deduction, wallet deduction, reward redemption, bid placement, offer acceptance, withdrawal, referral completion) are implemented as Postgres functions (`deduct_points_atomic`, `place_bid`, `accept_offer_exclusive`, `process_seller_withdrawal`, etc.) so concurrency is handled in the database, not in the client.
 - Known security debt is tracked explicitly (see §13).
@@ -105,22 +105,22 @@ All runtime AI calls go through the **Lovable AI Gateway** (`ai.gateway.lovable.
 
 | Edge function | Model | Why |
 |---|---|---|
-| `parse-search-intent` | `gemini-2.5-flash-lite` | High-volume, latency-sensitive, structured tool output only - cheapest tier wins |
+| `parse-search-intent` | `gemini-2.5-flash-lite` | High-volume, latency-sensitive, structured tool output only — cheapest tier wins |
 | `moderate-listing` | `gemini-2.5-flash-lite` | Pre-submit gate; must be fast, structured-output, runs on every listing |
 | `ai-help-assistant` | `gemini-2.5-flash-lite` | Customer-facing chat with intent classification; cost compounds |
 | `analyze-dispute` | `gemini-2.5-flash-lite` | Structured recommendation only; reasoning quality less critical than schema adherence |
-| `ai-listing-assist` | `gemini-3-flash-preview` | Multimodal vision + bilingual copywriting + price reasoning - needs a frontier-tier model |
+| `ai-listing-assist` | `gemini-3-flash-preview` | Multimodal vision + bilingual copywriting + price reasoning — needs a frontier-tier model |
 | `enrich-listing` | `gemini-3-flash-preview` | Same multimodal demands as listing assist |
 | `analyze-video-content` | `gemini-3-flash-preview` | Video understanding; flash-tier is the cost/quality sweet spot |
 | `verify-identity` | `gemini-2.5-flash` | ID document OCR + face match; accuracy matters more than latency |
 | `analyze-event-poster` | `gemini-2.5-flash-image-preview` | Image-native model for poster understanding |
 | `translate-message` | `openai/gpt-4o-mini` | GPT-4o-mini outperformed Gemini Flash on short conversational TH↔EN with idiom |
 
-**Structured output via tool calling, not JSON-mode-and-hope.** Every function that needs a typed payload (search filters, moderation verdict, dispute recommendation, listing metadata) declares an OpenAI-style `tools` schema and forces `tool_choice` to that function. JSON parsing is the fallback path, not the primary one - this eliminates the class of bugs where a model returns prose wrapped around JSON.
+**Structured output via tool calling, not JSON-mode-and-hope.** Every function that needs a typed payload (search filters, moderation verdict, dispute recommendation, listing metadata) declares an OpenAI-style `tools` schema and forces `tool_choice` to that function. JSON parsing is the fallback path, not the primary one — this eliminates the class of bugs where a model returns prose wrapped around JSON.
 
 **Per-call fallback.** Translation, moderation, and search-intent all degrade gracefully: a 402/429/empty response falls back to the original text, an open moderation decision, or a literal substring search, respectively. The user never sees a hard failure from the AI layer.
 
-**Prompt locality.** No prompt template lives in the React bundle. The frontend invokes a named function; the function owns the system prompt, the model selection, and the structured-output schema. This is the single most important governance choice in the project - it means prompts can be audited, versioned, and rolled back without touching the client.
+**Prompt locality.** No prompt template lives in the React bundle. The frontend invokes a named function; the function owns the system prompt, the model selection, and the structured-output schema. This is the single most important governance choice in the project — it means prompts can be audited, versioned, and rolled back without touching the client.
 
 ---
 
@@ -128,22 +128,22 @@ All runtime AI calls go through the **Lovable AI Gateway** (`ai.gateway.lovable.
 
 The product makes a deliberate distinction between **decisions the model is allowed to make** and **decisions only a human can finalize**:
 
-- **Moderation (`moderate-listing`)** - model can auto-reject obviously prohibited content (weapons, counterfeits, adult material). Borderline cases are surfaced to the admin queue with the model's rationale attached, never auto-published.
-- **Identity verification (`verify-identity`)** - auto-approve only if Gemini's confidence is ≥ 85% on both document validity and face-match. Anything below that threshold goes to manual review. The threshold is a tunable, not a magic number.
-- **Dispute triage (`ai-dispute-triage` + `analyze-dispute`)** - the model produces a structured recommendation: `refund_buyer | favor_seller | partial_refund | need_more_info`, with confidence, reasons, risk factors, and a suggested refund percentage. It **never** moves money. An admin reviews the recommendation and executes the action through a separate RPC.
-- **Help assistant (`ai-help-assistant`)** - handles FAQ-shaped queries autonomously, but escalates to a human conversation the moment intent classification returns `complaint`, `refund_request`, `account_issue`, or low confidence.
+- **Moderation (`moderate-listing`)** — model can auto-reject obviously prohibited content (weapons, counterfeits, adult material). Borderline cases are surfaced to the admin queue with the model's rationale attached, never auto-published.
+- **Identity verification (`verify-identity`)** — auto-approve only if Gemini's confidence is ≥ 85% on both document validity and face-match. Anything below that threshold goes to manual review. The threshold is a tunable, not a magic number.
+- **Dispute triage (`ai-dispute-triage` + `analyze-dispute`)** — the model produces a structured recommendation: `refund_buyer | favor_seller | partial_refund | need_more_info`, with confidence, reasons, risk factors, and a suggested refund percentage. It **never** moves money. An admin reviews the recommendation and executes the action through a separate RPC.
+- **Help assistant (`ai-help-assistant`)** — handles FAQ-shaped queries autonomously, but escalates to a human conversation the moment intent classification returns `complaint`, `refund_request`, `account_issue`, or low confidence.
 
-This is the pattern that maps cleanly onto enterprise process redesign: **automate the throughput layer, gate the consequence layer.** The model compresses time-to-decision; the human owns the decision itself. The same design applies directly to any enterprise workflow where AI recommendations touch financial, legal, or compliance decisions - the confidence threshold and escalation path simply get tuned to the regulatory tolerance of the domain.
+This is the pattern that maps cleanly onto enterprise process redesign: **automate the throughput layer, gate the consequence layer.** The model compresses time-to-decision; the human owns the decision itself. The same design applies directly to any enterprise workflow where AI recommendations touch financial, legal, or compliance decisions — the confidence threshold and escalation path simply get tuned to the regulatory tolerance of the domain.
 
 ---
 
 ## 6. Payments and escrow
 
-Omise was chosen over Stripe because Stripe doesn't have a meaningful Thai consumer presence - PromptPay QR is the dominant payment instrument and Omise treats it as a first-class flow.
+Omise was chosen over Stripe because Stripe doesn't have a meaningful Thai consumer presence — PromptPay QR is the dominant payment instrument and Omise treats it as a first-class flow.
 
 **Flow.**
-1. `process-payment` (card) or `create-promptpay-charge` (QR) - server-side charge creation against Omise. 3D Secure is handled server-side for cards.
-2. `omise-webhook` - `verify_jwt = false`, but verifies the Omise webhook signature in-function. Idempotent: re-delivery is safe because order state transitions are guarded by check constraints (`pending → paid → shipped → delivered`).
+1. `process-payment` (card) or `create-promptpay-charge` (QR) — server-side charge creation against Omise. 3D Secure is handled server-side for cards.
+2. `omise-webhook` — `verify_jwt = false`, but verifies the Omise webhook signature in-function. Idempotent: re-delivery is safe because order state transitions are guarded by check constraints (`pending → paid → shipped → delivered`).
 3. Funds enter **escrow** on `paid`. The order's `platform_fee_total` is computed and frozen at checkout time using `5% + ฿25` (configurable via `platform_settings`, with cascading rules so admin fee changes apply to new checkouts and still-pending orders only).
 4. `auto-release-escrow` (cron) releases funds to the seller's wallet 7 days after delivery confirmation, or immediately on buyer confirmation. Disputes opened within the 48-hour window after delivery pause the release.
 5. `process-payout` and `process_seller_withdrawal` (RPC) handle the seller cash-out. Minimum withdrawal is ฿100.
@@ -158,7 +158,7 @@ All rounded to 2 decimals via `Math.round` to avoid floating-point drift in fina
 
 ---
 
-## 7. Live commerce - the hardest production problem
+## 7. Live commerce — the hardest production problem
 
 The original goal was a TikTok-Live-style seller experience: browser-only broadcast, ~2s glass-to-glass latency, integrated auctions. Mux + WHIP (WebRTC-HTTP Ingestion Protocol) is the right primitive for this; the production headache came from how it interacts with Deno.
 
@@ -169,7 +169,7 @@ The original goal was a TikTok-Live-style seller experience: browser-only broadc
 - Forwards the offer to `https://global-live.mux.com/api/v1/whip/<streamKey>` with `Content-Type: application/sdp`
 - Returns the answer SDP back to the client as JSON
 
-This keeps the stream key server-side, avoids the PATCH-based trickle-ICE flow that was failing, and accepts a 5-second ICE-gathering window on the client before sending the offer (the "5s ICE limit" in the WHIP broadcasting spec). The earlier README claimed this was a Node service on Render - that was incorrect. The final architecture is pure Supabase edge functions; no second runtime.
+This keeps the stream key server-side, avoids the PATCH-based trickle-ICE flow that was failing, and accepts a 5-second ICE-gathering window on the client before sending the offer (the "5s ICE limit" in the WHIP broadcasting spec). The architecture is pure Supabase edge functions; no second runtime.
 
 **Auction integrity.** Auction closure is **server-authoritative**, not client-timer-driven. A client showing "0:00" doesn't end the auction; the Mux `video.live_stream.idle` webhook does. This eliminates the entire class of bugs where a buyer on a slow connection sees a different end time than the seller, and prevents client-side clock manipulation. Bids inside the final 3 minutes extend the timer by 3 minutes (anti-snipe), matching standard auction-house behavior.
 
@@ -188,9 +188,9 @@ The search layer doesn't use Elasticsearch, Algolia, Meilisearch, or any dedicat
    - GIN index on a generated tsvector covering English + Thai title/description columns (stored as sibling columns `description` / `description_th`, not as a JSONB blob)
    - `pg_trgm` for fuzzy matching on brand and Thai script (which doesn't tokenize well with standard FTS)
    - Numeric filters applied directly
-4. If the AI call fails or times out, fall back to a plain `ILIKE` over the bilingual columns - search degrades, never breaks.
+4. If the AI call fails or times out, fall back to a plain `ILIKE` over the bilingual columns — search degrades, never breaks.
 
-**Why this works.** Most secondhand fashion queries are short and structured ("oversized black tee size L under 500"). Compressing them to structured filters once is dramatically more useful than pure-text ranking. The model becomes a query rewriter, not a ranker - and that's a job small models do very well at low cost.
+**Why this works.** Most secondhand fashion queries are short and structured ("oversized black tee size L under 500"). Compressing them to structured filters once is dramatically more useful than pure-text ranking. The model becomes a query rewriter, not a ranker — and that's a job small models do very well at low cost.
 
 ---
 
@@ -198,7 +198,7 @@ The search layer doesn't use Elasticsearch, Algolia, Meilisearch, or any dedicat
 
 Events with paid tickets are a separate vertical inside the same app (markets, popups, livestream-adjacent events). The interesting governance work here is in the QR code design:
 
-- **HMAC-SHA256 signed payload.** Each ticket's `qr_payload` is a signed structure containing the ticket ID, order ID, and a nonce. The signing key (`TICKET_SIGNING_SECRET`) is in the edge-function environment for generation, and a `VITE_TICKET_SIGNING_SECRET` is in the client environment for **offline scanner verification** - door staff can validate signatures without a network round-trip.
+- **HMAC-SHA256 signed payload.** Each ticket's `qr_payload` is a signed structure containing the ticket ID, order ID, and a nonce. The signing key (`TICKET_SIGNING_SECRET`) is in the edge-function environment for generation, and a `VITE_TICKET_SIGNING_SECRET` is in the client environment for **offline scanner verification** — door staff can validate signatures without a network round-trip.
 - **Server-side redemption.** Signature validity ≠ redemption. The scanner still hits the DB to record a `ticket_check_ins` row, so a forged or replayed QR with a valid signature still gets caught.
 - **15-minute inventory hold.** Tier reservations happen in `increment_ticket_tier_sold` (RPC). If the buyer doesn't complete payment in 15 minutes, the inventory is released back atomically. This prevents the cart-abandonment-as-DoS pattern that plagues smaller ticketing systems.
 - **Transfers (`ticket_transfers`).** 48-hour expiry on transfer offers; accepting a transfer regenerates the QR signature so the original holder's QR is invalidated.
@@ -220,9 +220,9 @@ There are eight scheduled edge functions handling background work:
 | `cleanup-notifications` | daily | Prune read notifications older than 30 days |
 | `generate-sitemap` | daily | Rebuild sitemap.xml for SEO |
 
-This is the part of the system that most resembles enterprise operations work: idempotent jobs, defensive logging, partial-failure tolerance. None of them are allowed to leave the system in a worse state than they found it - every one of them is safe to re-run on the same input.
+This is the part of the system that most resembles enterprise operations work: idempotent jobs, defensive logging, partial-failure tolerance. None of them are allowed to leave the system in a worse state than they found it — every one of them is safe to re-run on the same input.
 
-**Observability.** PostHog handles client analytics (`autocapture: false`, manual virtual pageview tracking - the app is a single-page PWA with custom routing, so default capture would be useless). Edge-function logs ship to Supabase's log pipeline. Errors in the client are wrapped in a React `ErrorBoundary` with telemetry; the boundary's failure mode is "show a recovery screen", not "white page".
+**Observability.** PostHog handles client analytics (`autocapture: false`, manual virtual pageview tracking — the app is a single-page PWA with custom routing, so default capture would be useless). Edge-function logs ship to Supabase's log pipeline. Errors in the client are wrapped in a React `ErrorBoundary` with telemetry; the boundary's failure mode is "show a recovery screen", not "white page".
 
 ---
 
@@ -230,12 +230,12 @@ This is the part of the system that most resembles enterprise operations work: i
 
 Two auth flows coexist:
 
-- **Supabase email auth** - primary. Configured with `detectSessionInUrl: false` and `flowType: 'implicit'` because Supabase's default email-link flow was breaking on iOS Safari in-app browsers (LINE, Facebook). A custom `/auth/callback` route extracts the hash fragment and hands it to `setSession` explicitly. This is documented in `mem://constraints/supabase-auth-config` as a deliberate deviation from defaults.
-- **LINE OAuth** - custom edge function (`line-auth`). LINE is the dominant identity provider in Thailand. The function exchanges the LINE auth code for a profile, then either finds the matching Supabase user (by email, with a known O(n) lookup ceiling at 1,000 users - see §13) or provisions a new one.
+- **Supabase email auth** — primary. Configured with `detectSessionInUrl: false` and `flowType: 'implicit'` because Supabase's default email-link flow was breaking on iOS Safari in-app browsers (LINE, Facebook). A custom `/auth/callback` route extracts the hash fragment and hands it to `setSession` explicitly. This is documented in `mem://constraints/supabase-auth-config` as a deliberate deviation from defaults.
+- **LINE OAuth** — custom edge function (`line-auth`). LINE is the dominant identity provider in Thailand. The function exchanges the LINE auth code for a profile, then either finds the matching Supabase user (by email, with a known O(n) lookup ceiling at 1,000 users — see §13) or provisions a new one.
 
 Email verification is a hard gate: unverified accounts cannot create listings, send messages, or open chats. This is enforced in RLS, not just in the UI.
 
-Password hardening: minimum 8 characters, leaked-password protection enabled via the Supabase dashboard (one of two known **manual config items** - the dashboard toggle has no Terraform/API equivalent).
+Password hardening: minimum 8 characters, leaked-password protection enabled via the Supabase dashboard (one of two known **manual config items** — the dashboard toggle has no Terraform/API equivalent).
 
 ---
 
@@ -249,13 +249,13 @@ The implementation cadence used multiple AI tools, each with a defined role:
 | **Claude (Sonnet/Opus)** | Architecture reasoning, RLS policy review, debugging stubborn production issues (the WHIP problem in particular), code review on Lovable-authored changes. |
 | **Cursor** | Local IDE work for surgical multi-file edits where Lovable's request-scoped context was unhelpful. |
 | **Gemini Pro** | Long-context reads when reasoning about the full schema or several edge functions at once. |
-| **ChatGPT** | Quick utility work - transcribing voice notes from market research, drafting copy, naming things. |
+| **ChatGPT** | Quick utility work — transcribing voice notes from market research, drafting copy, naming things. |
 
 **Important distinction.** None of the above are in the **runtime** of ThriftTH. The runtime AI surface is exclusively the Lovable AI Gateway (Gemini + GPT families). Claude/Cursor/ChatGPT were build-time engineering tools, not user-facing dependencies. This separation matters: the production system has one AI vendor relationship to govern, not four.
 
-**On leading with AI tools.** Building solo with this stack is structurally similar to leading a small distributed team: you set the architecture, review generated output, course-correct when a tool produces something wrong, allocate the right tool to the right task, and own every tradeoff. The feedback loop is tighter than with human collaborators and the tools don't push back - but the decision-making pattern is the same. Direction setting, output review, course correction, and final accountability all sit with one person. That's the experience this build was designed to develop and demonstrate.
+**On leading with AI tools.** Building solo with this stack is structurally similar to leading a small distributed team: you set the architecture, review generated output, course-correct when a tool produces something wrong, allocate the right tool to the right task, and own every tradeoff. The feedback loop is tighter than with human collaborators and the tools don't push back — but the decision-making pattern is the same. Direction setting, output review, course correction, and final accountability all sit with one person. That's the experience this build was designed to develop and demonstrate.
 
-**Validation loop.** Pre-launch audits were run as discrete phases - financial logic, auth, search, payment, shipping - each with a checklist (the `docs/TRANSACTION_FLOW_TEST_CHECKLIST.md` and `docs/UX_TRANSACTION_FLOW_AUDIT.md` artifacts in the repo are the working evidence of this). The audits were treated as gates, not as documentation theater.
+**Validation loop.** Pre-launch audits were run as discrete phases — financial logic, auth, search, payment, shipping — each with a checklist (the `docs/TRANSACTION_FLOW_TEST_CHECKLIST.md` and `docs/UX_TRANSACTION_FLOW_AUDIT.md` artifacts in the repo are the working evidence of this). The audits were treated as gates, not as documentation theater.
 
 ---
 
@@ -277,6 +277,7 @@ A senior reviewer should see this section as the most important one. It's where 
 ---
 
 ## 14. What this project is evidence of
+
 The architectural choices made throughout this solo build were designed to address the exact types of operational constraints encountered in large-scale enterprise environments:
 
 Production-Grade Orchestration. The system moves past chat interfaces into a governed, multi-model pipeline. Using model-per-task routing based on cost, latency, and capability mirrors the exact infrastructure required to scale internal enterprise tools efficiently while managing API overhead.
@@ -293,15 +294,15 @@ Mapped, without spin, to the competencies relevant to an AI Builder role:
 
 - **Workflow redesign.** Listing creation reduced from a multi-step manual flow to "upload photos, confirm". Search reduced from "filter through 8 dropdowns" to "type a sentence". Disputes reduced from "free-text email" to "structured triage with reviewer recommendation". Each redesign followed the same pattern: identify where human time is being spent on classification rather than judgment, and automate the classification layer.
 
-- **Productionization.** 34 edge functions, 8 cron jobs, Omise/Mux/Shippop/LINE/Resend webhook surface, RLS-enforced multi-tenant data, idempotent payment state machine - with 30+ active beta users transacting on the live system.
+- **Productionization.** 34 edge functions, 8 cron jobs, Omise/Mux/Shippop/LINE/Resend webhook surface, RLS-enforced multi-tenant data, idempotent payment state machine — with 30+ active beta users transacting on the live system.
 
-- **Responsible AI thinking.** Pre-submit moderation, confidence-thresholded auto-approval, server-side prompt locality, human review on consequence decisions, transparent escalation paths. These aren't bolt-ons - they're structural. In a regulated enterprise context (audit, tax, advisory), the same design principle applies: the model recommends, the human decides, and the boundary between those two states is explicit and auditable.
+- **Responsible AI thinking.** Pre-submit moderation, confidence-thresholded auto-approval, server-side prompt locality, human review on consequence decisions, transparent escalation paths. These aren't bolt-ons — they're structural. In a regulated enterprise context (audit, tax, advisory), the same design principle applies: the model recommends, the human decides, and the boundary between those two states is explicit and auditable.
 
-- **Systems integration.** Five external SaaS surfaces (payments, video, shipping, identity, email) integrated with their respective webhook signature schemes, idempotency requirements, and failure modes. Enterprise environments typically involve more integration surfaces, not fewer - this is the relevant practice ground.
+- **Systems integration.** Five external SaaS surfaces (payments, video, shipping, identity, email) integrated with their respective webhook signature schemes, idempotency requirements, and failure modes. Enterprise environments typically involve more integration surfaces, not fewer — this is the relevant practice ground.
 
-- **Ambiguity navigation.** Thai market constraints - PromptPay, LINE, bilingual content, mobile-first low-RAM Android - drove non-obvious architectural choices that wouldn't surface in a North American template. Operating in ambiguity without a playbook, and making defensible decisions under those conditions, is the transferable skill.
+- **Ambiguity navigation.** Thai market constraints — PromptPay, LINE, bilingual content, mobile-first low-RAM Android — drove non-obvious architectural choices that wouldn't surface in a North American template. Operating in ambiguity without a playbook, and making defensible decisions under those conditions, is the transferable skill.
 
-- **Technical leadership without a formal pedigree.** End-to-end ownership: market research → schema → edge functions → AI orchestration → payments → live commerce → production cutover → operational runbook. AI was the team; the judgment and accountability were mine. The same principles that governed this build - clear direction, structured output review, course correction on wrong turns, explicit tradeoffs - translate directly to leading a team of human builders.
+- **Technical leadership without a formal pedigree.** End-to-end ownership: market research → schema → edge functions → AI orchestration → payments → live commerce → production cutover → operational runbook. AI was the team; the judgment and accountability were mine. The same principles that governed this build — clear direction, structured output review, course correction on wrong turns, explicit tradeoffs — translate directly to leading a team of human builders.
 
 ---
 
